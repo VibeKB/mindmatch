@@ -1,28 +1,32 @@
 rules_version = '2';
 service cloud.firestore {
  match /databases/{database}/documents {
-  function signed() { return request.auth != null; }
-  function owner(roomId) { return signed() && get(/databases/$(database)/documents/rooms/$(roomId)).data.owner == request.auth.uid; }
-  function room(roomId) { return get(/databases/$(database)/documents/rooms/$(roomId)).data; }
-  match /rooms/{roomId} {
+  function signed(){return request.auth != null;}
+  function host(){return signed() && request.auth.token.email == 'host@mindmatch.live' && request.auth.token.firebase.sign_in_provider == 'password';}
+  function owner(id){return host() && get(/databases/$(database)/documents/rooms/$(id)).data.owner == request.auth.uid;}
+  function room(id){return get(/databases/$(database)/documents/rooms/$(id)).data;}
+  function participant(id){return signed() && exists(/databases/$(database)/documents/rooms/$(id)/entries/$(request.auth.uid));}
+  match /config/live {
    allow get: if signed();
    allow list: if false;
-   allow create: if signed() && request.resource.data.owner == request.auth.uid && request.resource.data.status == 'draft';
-   allow update, delete: if owner(roomId) && request.resource.data.owner == resource.data.owner;
-   match /private/{keyId} {
-    allow read, write: if keyId == 'key' && owner(roomId);
-   }
-   match /entries/{entryId} {
-    allow get: if signed() && (owner(roomId) || entryId == request.auth.uid);
-    allow list: if signed() && (owner(roomId) || exists(/databases/$(database)/documents/rooms/$(roomId)/entries/$(request.auth.uid)));
-    allow create: if signed() && entryId == request.auth.uid && request.resource.data.uid == request.auth.uid && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 20 && room(roomId).status in ['draft','lobby','question','reveal'];
-    allow update, delete: if false;
+   allow create,update: if host() && request.resource.data.roomId is string && exists(/databases/$(database)/documents/rooms/$(request.resource.data.roomId)) && get(/databases/$(database)/documents/rooms/$(request.resource.data.roomId)).data.owner == request.auth.uid;
+   allow delete: if false;
+  }
+  match /rooms/{id} {
+   allow get: if signed();
+   allow list: if false;
+   allow create: if host() && request.resource.data.owner == request.auth.uid && request.resource.data.status == 'lobby';
+   allow update: if owner(id) && request.resource.data.owner == resource.data.owner;
+   allow delete: if false;
+   match /entries/{uid} {
+    allow get,list: if owner(id) || participant(id);
+    allow create: if signed() && request.auth.token.firebase.sign_in_provider == 'anonymous' && uid == request.auth.uid && request.resource.data.uid == request.auth.uid && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 20 && room(id).status in ['lobby','question','reveal'];
+    allow update,delete: if false;
    }
    match /votes/{voteId} {
-    allow get: if signed() && (owner(roomId) || resource.data.uid == request.auth.uid);
-    allow list: if signed() && (owner(roomId) || exists(/databases/$(database)/documents/rooms/$(roomId)/entries/$(request.auth.uid)));
-    allow create: if signed() && request.resource.data.uid == request.auth.uid && request.resource.data.question is int && request.resource.data.question >= 0 && request.resource.data.question < 10 && request.resource.data.choice is int && request.resource.data.choice in [0,1] && voteId == (string(request.resource.data.question) + '_' + request.auth.uid) && room(roomId).status == 'question' && room(roomId).current == request.resource.data.question && exists(/databases/$(database)/documents/rooms/$(roomId)/entries/$(request.auth.uid));
-    allow update, delete: if false;
+    allow get,list: if owner(id) || participant(id);
+    allow create: if participant(id) && request.auth.token.firebase.sign_in_provider == 'anonymous' && request.resource.data.uid == request.auth.uid && request.resource.data.question is int && request.resource.data.question >= 0 && request.resource.data.question < room(id).count && request.resource.data.choice in [0,1] && voteId == string(request.resource.data.question) + '_' + request.auth.uid && room(id).status == 'question' && room(id).current == request.resource.data.question;
+    allow update,delete: if false;
    }
   }
  }

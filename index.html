@@ -8,13 +8,13 @@
 </main><script type="module">
 import{initializeApp}from'https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js';
 import{getAuth,onAuthStateChanged,signInAnonymously,signInWithEmailAndPassword,signOut}from'https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js';
-import{getFirestore,doc,collection,query,where,runTransaction,setDoc,updateDoc,getDoc,onSnapshot,serverTimestamp}from'https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js';
+import{getFirestore,doc,collection,query,where,runTransaction,setDoc,updateDoc,getDoc,getDocFromServer,onSnapshot,serverTimestamp}from'https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js';
 const app=initializeApp({apiKey:"AIzaSyA6emhzRd_yhaXUPo_GuAyKpATtzjiswOM",authDomain:"mindmatch-live.firebaseapp.com",projectId:"mindmatch-live",storageBucket:"mindmatch-live.firebasestorage.app",messagingSenderId:"753411227032",appId:"1:753411227032:web:81191196ed4218f2063fed"});
 const ADMIN_EMAIL='host@mindmatch.live';
 const auth=getAuth(app),db=getFirestore(app),$=id=>document.getElementById(id);
 const configRef=doc(db,'config','live');const joinUrl=()=>location.origin+location.pathname;
 const defaults=[["로또 1등에 당첨된다면?","모르는 척 출근한다","바로 퇴사한다"],["평생 둘 중 하나의 요일에 휴가를 쓸 수 있다면?","금요일 쉬기","수요일 쉬기"],["평생 한 계절만 산다면?","여름(최고 30도)","겨울(최저 영하 10도)"],["돈 중 하나를 받는다면?","일시금 1억 원(노세금)","매달 100만 원씩 20년"],["밤 11시 부행장님(또는 본부장님)에게 업무 카톡이 온다면?","바로 답장하기","다음 날 답장하기"],["내 마음대로 출퇴근할 수 있다면?","매일 조금 늦게 출근","매일 조금 일찍 퇴근"],["회식 자리에서 한 가지 능력이 생긴다면?","집 갈 때 순간이동","꺼리는 사람과 무조건 피할 수 있는 자리만 앉음(나 안들킴)"],["승진 승격을 하는 대신 한 가지를 포기해야 한다면?","매일 출퇴근길 핸드폰 못함","(나만) 회사에서 1년간 모든 대화 노래로 하기"],["연봉 2배 인상 대신 한 가지를 포기해야 한다면?","걸을 때마다 뽁뽁 효과음 생김","재채기할 때 소리가 방귀소리로 바뀜"],["100억을 받는 대신 이름 '김개똥'으로 개명하기","받고 개명한다","받지 않고 이름을 유지한다"]];
-let user=null,admin=false,active=null,room=null,roomId='',entries=[],votes=[],roomUnsubs=[],voteUnsub=null,voteWatchKey='',configUnsub=null,joined=false,participantName='',localVote=false;
+let user=null,admin=false,active=null,room=null,roomId='',entries=[],votes=[],roomUnsubs=[],voteUnsub=null,voteWatchKey='',configUnsub=null,joined=false,participantName='',localVote=false,syncTimer=null,syncBusy=false;
 const show=id=>$(id).classList.remove('hide'),hide=id=>$(id).classList.add('hide'),error=e=>{$('error').textContent=e?.message||String(e)},clear=()=>{$('error').textContent=''};
 const questions=r=>(r?.questions||[]).map(q=>[q.text,q.a,q.b]);
 const qrUrl=url=>'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data='+encodeURIComponent(url);
@@ -36,8 +36,11 @@ else {const mine=votes.find(v=>v.question===i&&v.uid===user?.uid);html='<div cla
 $('playerContent').innerHTML=html;document.querySelectorAll('[data-choice]').forEach(x=>x.onclick=()=>cast(Number(x.dataset.choice)));if($('shareInvite'))$('shareInvite').onclick=async()=>{try{if(navigator.share)await navigator.share({title:'이심전심 LIVE 참여',url:joinUrl()});else if(navigator.clipboard){await navigator.clipboard.writeText(joinUrl());alert('참가 링크를 복사했습니다.')}else prompt('참가 링크를 복사하세요',joinUrl())}catch(e){if(e.name!=='AbortError')error(e)}}}
 
 function esc(s){return String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]))}
-function unsubscribe(){roomUnsubs.forEach(f=>f());roomUnsubs=[];if(voteUnsub){voteUnsub();voteUnsub=null}voteWatchKey='';entries=[];votes=[];room=null;}
-function subscribe(id){if(!id||roomId===id&&roomUnsubs.length)return;unsubscribe();roomId=id;roomUnsubs.push(onSnapshot(doc(db,'rooms',id),s=>{if(!s.exists()){error('게임을 찾을 수 없습니다.');return}const old=room?.current;room=s.data();if(!admin&&joined)watchOwnVote(id,room.current);if(admin){if(old===undefined)editor();show('host')}else if(joined)show('player');localVote=old===room.current?localVote:false;render()},error));if(admin){roomUnsubs.push(onSnapshot(collection(db,'rooms',id,'entries'),s=>{entries=s.docs.map(d=>d.data());render()},error));roomUnsubs.push(onSnapshot(collection(db,'rooms',id,'votes'),s=>{votes=s.docs.map(d=>d.data());render()},error))}}
+function unsubscribe(){if(syncTimer){clearInterval(syncTimer);syncTimer=null}roomUnsubs.forEach(f=>f());roomUnsubs=[];if(voteUnsub){voteUnsub();voteUnsub=null}voteWatchKey='';entries=[];votes=[];room=null;}
+function applyRoomSnapshot(s,id){if(id!==roomId||!s.exists())return;if(s.metadata.fromCache&&room)return;const old=room?.current;room=s.data();if(!admin&&joined)watchOwnVote(id,room.current);if(admin){if(old===undefined)editor();show('host')}else if(joined)show('player');localVote=old===room.current?localVote:false;render()}
+async function refreshRoom(){if(!roomId||!user||syncBusy||document.visibilityState==='hidden')return;syncBusy=true;const id=roomId;try{const s=await getDocFromServer(doc(db,'rooms',id));applyRoomSnapshot(s,id)}catch(e){console.warn('실시간 상태 재확인 지연',e)}finally{syncBusy=false}}
+function subscribe(id){if(!id||roomId===id&&roomUnsubs.length)return;unsubscribe();roomId=id;roomUnsubs.push(onSnapshot(doc(db,'rooms',id),{includeMetadataChanges:true},s=>{if(!s.exists()){error('게임을 찾을 수 없습니다.');return}applyRoomSnapshot(s,id)},error));if(admin){roomUnsubs.push(onSnapshot(collection(db,'rooms',id,'entries'),s=>{entries=s.docs.map(d=>d.data());render()},error));roomUnsubs.push(onSnapshot(collection(db,'rooms',id,'votes'),s=>{votes=s.docs.map(d=>d.data());render()},error))}syncTimer=setInterval(refreshRoom,5000)}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')refreshRoom()});window.addEventListener('focus',refreshRoom);
 
 function watchOwnVote(id,i){const key=id+'_'+i+'_'+user.uid;if(voteWatchKey===key)return;if(voteUnsub)voteUnsub();voteWatchKey=key;votes=[];voteUnsub=onSnapshot(doc(db,'rooms',id,'votes',i+'_'+user.uid),s=>{votes=s.exists()?[s.data()]:[];render()},error)}
 

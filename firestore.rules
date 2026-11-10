@@ -25,7 +25,14 @@ service cloud.firestore {
     allow update,delete: if false;
    }
    match /votes/{voteId} {
-    allow get,list: if owner(id) || (participant(id) && resource.data.uid == request.auth.uid);
+    allow get: if owner(id) || (participant(id) && voteId.matches('^[0-9]+_' + request.auth.uid + '
+    allow create: if participant(id) && request.auth.token.firebase.sign_in_provider == 'anonymous' && request.resource.data.uid == request.auth.uid && request.resource.data.question is int && request.resource.data.question >= 0 && request.resource.data.question < room(id).count && request.resource.data.choice in [0,1] && voteId == string(request.resource.data.question) + '_' + request.auth.uid && room(id).status == 'question' && room(id).current == request.resource.data.question && getAfter(/databases/$(database)/documents/rooms/$(id)).data.responseCount == room(id).responseCount + 1;
+    allow update,delete: if false;
+   }
+  }
+ }
+}));
+    allow list: if owner(id);
     allow create: if participant(id) && request.auth.token.firebase.sign_in_provider == 'anonymous' && request.resource.data.uid == request.auth.uid && request.resource.data.question is int && request.resource.data.question >= 0 && request.resource.data.question < room(id).count && request.resource.data.choice in [0,1] && voteId == string(request.resource.data.question) + '_' + request.auth.uid && room(id).status == 'question' && room(id).current == request.resource.data.question && getAfter(/databases/$(database)/documents/rooms/$(id)).data.responseCount == room(id).responseCount + 1;
     allow update,delete: if false;
    }

@@ -16,12 +16,12 @@ service cloud.firestore {
    allow get: if signed();
    allow list: if false;
    allow create: if host() && request.resource.data.owner == request.auth.uid && request.resource.data.status == 'lobby';
-   allow update: if owner(id) && request.resource.data.owner == resource.data.owner;
+   allow update: if (owner(id) && request.resource.data.owner == resource.data.owner) || (signed() && request.auth.token.firebase.sign_in_provider == 'anonymous' && resource.data.status == 'lobby' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participantCount']) && resource.data.participantCount is int && resource.data.participantCount >= 0 && resource.data.participantCount < 25 && request.resource.data.participantCount == resource.data.participantCount + 1 && !exists(/databases/$(database)/documents/rooms/$(id)/entries/$(request.auth.uid)) && getAfter(/databases/$(database)/documents/rooms/$(id)/entries/$(request.auth.uid)).data.uid == request.auth.uid);
    allow delete: if false;
    match /entries/{uid} {
     allow get: if owner(id) || (signed() && uid == request.auth.uid);
     allow list: if owner(id);
-    allow create: if signed() && request.auth.token.firebase.sign_in_provider == 'anonymous' && uid == request.auth.uid && request.resource.data.uid == request.auth.uid && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 20 && room(id).status in ['lobby','question','reveal'];
+    allow create: if signed() && request.auth.token.firebase.sign_in_provider == 'anonymous' && uid == request.auth.uid && request.resource.data.uid == request.auth.uid && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 20 && room(id).status == 'lobby' && room(id).participantCount < 25 && getAfter(/databases/$(database)/documents/rooms/$(id)).data.participantCount == room(id).participantCount + 1;
     allow update,delete: if false;
    }
    match /votes/{voteId} {
